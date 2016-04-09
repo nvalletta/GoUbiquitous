@@ -2,6 +2,14 @@ apply plugin: 'com.android.application'
 apply plugin: 'com.google.gms.google-services'
 
 android {
+    signingConfigs {
+        sunshine {
+            keyAlias 'sunshine'
+            keyPassword 'sunshine'
+            storeFile file('sunshine.jks')
+            storePassword 'sunshine'
+        }
+    }
     compileSdkVersion 22
     buildToolsVersion "22.0.0"
     defaultConfig {
@@ -15,6 +23,7 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.sunshine
         }
     }
     buildTypes.each {
@@ -34,4 +43,7 @@ dependencies {
     compile 'com.android.support:recyclerview-v7:22.2.0'
     compile 'com.google.android.apps.muzei:muzei-api:2.0'
     compile 'com.google.android.gms:play-services-gcm:7.5.0'
+    compile 'com.google.android.gms:play-services-gcm:8.4.0'
+    compile 'com.google.android.gms:play-services-location:8.4.0'
+    compile 'com.google.android.gms:play-services-wearable:8.4.0'
 }

@@ -22,17 +22,19 @@ import static com.example.android.sunshine.app.SunshineWatchFace.*;
  */
 public class SunshineWatchUpdateService extends WearableListenerService {
 
+    public static final String REQUEST_WEATHER_DATA = "/SunshineWatchUpdateService/RequestData";
     public static final String WEATHER_HAS_BEEN_UPDATED = "/SunshineWatchUpdateService/WeatherUpdate";
 
-    public static final String WEATHER_TEMP_HIGH = "weatherTempLow";
+    public static final String WEATHER_TEMP_HIGH = "weatherTempHigh";
     public static final String WEATHER_TEMP_LOW = "weatherTempLow";
     public static final String WEATHER_ICON_ASSET = "weatherIconAsset";
 
     @Override
     public void onDataChanged(DataEventBuffer dataEvents) {
         for (DataEvent dataEvent : dataEvents) {
-            // If the event is null or if the event is something other than data change, just continue...
-            if (null == dataEvent || dataEvent.getType() != DataEvent.TYPE_CHANGED) {
+            if (null == dataEvent
+                    || dataEvent.getType() != DataEvent.TYPE_CHANGED
+                    || !(dataEvent.getDataItem().getUri().getPath().equals(WEATHER_HAS_BEEN_UPDATED))) {
                 continue;
             }
             parseDataEvent(dataEvent);

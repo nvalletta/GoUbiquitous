@@ -36,6 +36,10 @@ import android.support.wearable.watchface.WatchFaceStyle;
 import android.view.SurfaceHolder;
 import android.view.WindowInsets;
 
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.wearable.PutDataMapRequest;
+import com.google.android.gms.wearable.Wearable;
+
 import java.lang.ref.WeakReference;
 import java.util.Calendar;
 import java.util.Date;
@@ -62,6 +66,8 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
      */
     private static final int MSG_UPDATE_TIME = 0;
 
+    private static final char DEGREES = (char)0x00B0;
+
     private static Engine mEngine;
 
     private static int mTemperatureHigh;
@@ -77,9 +83,7 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
         mTemperatureHigh = temperatureHigh;
         mTemperatureLow = temperatureLow;
         mWeatherIcon = weatherIcon;
-    }
 
-    public static void notifyWatchOfWeatherChange() {
         if (null != mEngine) {
             mEngine.invalidate();
         }
@@ -111,16 +115,16 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
         boolean mRegisteredTimeZoneReceiver = false;
         Paint mBackgroundPaint;
         Paint mTextPaint;
+        Paint mSubTextPaint;
         boolean mAmbient;
 
         Calendar mCalendar;
-        TimeZone mTimeZone;
 
         final BroadcastReceiver mTimeZoneReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                mTimeZone = TimeZone.getTimeZone(intent.getStringExtra("time-zone"));
-                mCalendar.setTimeZone(mTimeZone);
+                TimeZone timeZone = TimeZone.getTimeZone(intent.getStringExtra("time-zone"));
+                mCalendar = Calendar.getInstance(timeZone);
             }
         };
         float mXOffset;
@@ -144,15 +148,18 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
                     .build());
 
             Resources resources = SunshineWatchFace.this.getResources();
-            mYOffset = resources.getDimension(R.dimen.digital_y_offset);
+            mYOffset = resources.getDimension(R.dimen.time_y_offset);
 
             mBackgroundPaint = new Paint();
             mBackgroundPaint.setColor(ContextCompat.getColor(SunshineWatchFace.this, R.color.background));
 
-            mTextPaint = new Paint();
             mTextPaint = createTextPaint(ContextCompat.getColor(SunshineWatchFace.this, R.color.digital_text));
+            mSubTextPaint = createTextPaint(ContextCompat.getColor(SunshineWatchFace.this, R.color.digital_text));
+            mSubTextPaint.setAlpha(150);
 
             mCalendar = Calendar.getInstance();
+
+            requestData();
         }
 
         @Override
@@ -175,9 +182,8 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
 
             if (visible) {
                 registerReceiver();
-
                 // Update time zone in case it changed while we weren't visible.
-                mCalendar.setTimeZone(mTimeZone);
+                updateCalendar();
             } else {
                 unregisterReceiver();
             }
@@ -185,6 +191,17 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
             // Whether the timer should be running depends on whether we're visible (as well as
             // whether we're in ambient mode), so we may need to start or stop the timer.
             updateTimer();
+        }
+
+        private void requestData() {
+            PutDataMapRequest putDataMapRequest = PutDataMapRequest.create(SunshineWatchUpdateService.REQUEST_WEATHER_DATA);
+            putDataMapRequest.getDataMap().putLong("weatherTimeStamp", System.currentTimeMillis());
+            GoogleApiClient googleApiClient = new GoogleApiClient.Builder(getApplicationContext())
+                    .addApi(Wearable.API)
+                    .build();
+            googleApiClient.connect();
+            Wearable.DataApi.putDataItem(googleApiClient, putDataMapRequest.asPutDataRequest());
+            googleApiClient.disconnect();
         }
 
         private void registerReceiver() {
@@ -211,12 +228,13 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
             // Load resources that have alternate values for round watches.
             Resources resources = SunshineWatchFace.this.getResources();
             boolean isRound = insets.isRound();
-            mXOffset = resources.getDimension(isRound
-                    ? R.dimen.digital_x_offset_round : R.dimen.digital_x_offset);
-            float textSize = resources.getDimension(isRound
-                    ? R.dimen.digital_text_size_round : R.dimen.digital_text_size);
+            mXOffset = resources.getDimension(isRound ? R.dimen.time_x_offset_round : R.dimen.time_x_offset);
 
-            mTextPaint.setTextSize(textSize);
+            float timeTextSize = resources.getDimension(isRound ? R.dimen.time_text_size_round : R.dimen.time_text_size);
+            mTextPaint.setTextSize(timeTextSize);
+
+            float temperatureTextSize = resources.getDimension(isRound ? R.dimen.temperature_text_size_round : R.dimen.temperature_text_size);
+            mSubTextPaint.setTextSize(temperatureTextSize);
         }
 
         @Override
@@ -249,7 +267,7 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
 
         @Override
         public void onDraw(Canvas canvas, Rect bounds) {
-            updateTime();
+            updateCalendar();
 
             // Draw the background.
             drawWatchBackground(canvas, bounds);
@@ -257,7 +275,11 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
             // Draw H:MM in ambient mode or H:MM:SS in interactive mode.
             drawWatchTimeText(canvas);
 
-            //todo: draw temperature
+            // Draw the temperature provided by the paired handheld's Sunshine app.
+            drawWatchTemperatureText(canvas);
+
+            // Draw the weather icon provided by the paired handheld's Sunshine app.
+            drawWatchWeatherIcon(canvas);
         }
 
         private void drawWatchBackground(Canvas canvas, Rect bounds) {
@@ -269,14 +291,29 @@ public class SunshineWatchFace extends CanvasWatchFaceService {
         }
 
         private void drawWatchTimeText(Canvas canvas) {
-            String text = String.format("%d:%02d:%02d", mCalendar.get(Calendar.HOUR_OF_DAY), mCalendar.get(Calendar.MINUTE), mCalendar.get(Calendar.SECOND));
+            String text = String.format("%d:%02d", mCalendar.get(Calendar.HOUR_OF_DAY), mCalendar.get(Calendar.MINUTE));
             canvas.drawText(text, mXOffset, mYOffset, mTextPaint);
         }
 
-        private void updateTime() {
-            if (null == mCalendar.getTimeZone()) {
-                mCalendar.setTimeZone(mTimeZone);
+        private void drawWatchTemperatureText(Canvas canvas) {
+            float xOffset = mXOffset + 35;
+            if (mTemperatureLow >= 10 || mTemperatureLow <= -10) {
+                xOffset -= 4;
             }
+            if (mTemperatureHigh >= 10 || mTemperatureHigh <= -10) {
+                xOffset -= 5;
+            }
+            canvas.drawText(String.valueOf(mTemperatureLow) + DEGREES + " - " + mTemperatureHigh + DEGREES, xOffset, mYOffset + 50, mSubTextPaint);
+        }
+
+        private void drawWatchWeatherIcon(Canvas canvas) {
+            if(null != mWeatherIcon){
+                canvas.drawBitmap(mWeatherIcon, mXOffset + 55, mYOffset - 135, null);
+            }
+        }
+
+        private void updateCalendar() {
+            mCalendar.setTimeZone(TimeZone.getDefault());
             mCalendar.setTime(new Date());
         }
 

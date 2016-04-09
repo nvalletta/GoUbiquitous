@@ -36,12 +36,18 @@ import com.example.android.sunshine.app.R;
 import com.example.android.sunshine.app.Utility;
 import com.example.android.sunshine.app.data.WeatherContract;
 import com.example.android.sunshine.app.muzei.WeatherMuzeiSource;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.wearable.Asset;
+import com.google.android.gms.wearable.PutDataMapRequest;
+import com.google.android.gms.wearable.PutDataRequest;
+import com.google.android.gms.wearable.Wearable;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -346,6 +352,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
 
                 updateWidgets();
                 updateMuzei();
+                updateWearables();
                 notifyWeather();
             }
             Log.d(LOG_TAG, "Sync Complete. " + cVVector.size() + " Inserted");
@@ -356,6 +363,73 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
             e.printStackTrace();
             setLocationStatus(getContext(), LOCATION_STATUS_SERVER_INVALID);
         }
+    }
+
+    private void updateWearables() {
+        Context context = getContext();
+        String locationQuery = Utility.getPreferredLocation(context);
+        Uri weatherUri = WeatherContract.WeatherEntry.buildWeatherLocationWithDate(locationQuery, System.currentTimeMillis());
+        Cursor cursor = context.getContentResolver().query(weatherUri, NOTIFY_WEATHER_PROJECTION, null, null, null);
+
+        if (null == cursor) {
+            return;
+        }
+        sendWearableWeatherInfo(context, cursor);
+    }
+
+    private void sendWearableWeatherInfo(Context context, Cursor cursor) {
+        if (cursor.moveToFirst()) {
+            PutDataMapRequest putDataMapRequest = PutDataMapRequest.create("/SunshineWatchUpdateService/WeatherUpdate");
+
+            putDataMapRequest.getDataMap().putAsset("weatherIconAsset", getWearableWeatherIconAsset(context, cursor));
+
+            double highTemperature = cursor.getDouble(INDEX_MAX_TEMP);
+            double lowTemperature = cursor.getDouble(INDEX_MIN_TEMP);
+
+            Log.w("SunshineSyncAdapter", "highTemperature: " + highTemperature);
+            Log.w("SunshineSyncAdapter", "lowTemperature: " + highTemperature);
+
+            int highTemperatureInt = (int)Math.round(highTemperature);
+            int lowTemperatureInt = (int)Math.round(lowTemperature);
+
+            Log.w("SunshineSyncAdapter", "highTemperatureInt: " + highTemperatureInt);
+            Log.w("SunshineSyncAdapter", "lowTemperatureInt: " + lowTemperatureInt);
+
+            putDataMapRequest.getDataMap().putInt("weatherTempHigh", highTemperatureInt);
+            putDataMapRequest.getDataMap().putInt("weatherTempLow", lowTemperatureInt);
+
+            // Below: so that the data has really "changed" and the watch will be properly notified
+            putDataMapRequest.getDataMap().putLong("weatherTimeStamp", System.currentTimeMillis());
+
+            PutDataRequest putDataRequest = putDataMapRequest.asPutDataRequest();
+            GoogleApiClient googleApiClient = new GoogleApiClient.Builder(context).addApi(Wearable.API).build();
+            googleApiClient.connect();
+            Wearable.DataApi.putDataItem(googleApiClient, putDataRequest);
+        }
+        cursor.close();
+    }
+
+    //This method should not close the cursor.
+    private Asset getWearableWeatherIconAsset(Context context, Cursor cursor) {
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+        String urlString = Utility.getArtUrlForWeatherCondition(context, cursor.getInt(INDEX_WEATHER_ID));
+        int resourceId = Utility.getArtResourceForWeatherCondition(cursor.getInt(INDEX_WEATHER_ID));
+        int resourceSize = context.getResources().getDimensionPixelSize(R.dimen.weather_icon_pixel_size_wearables);
+
+        try {
+            Bitmap weatherBitmap = Glide.with(context)
+                    .load(urlString)
+                    .asBitmap()
+                    .error(resourceId)
+                    .fitCenter()
+                    .into(resourceSize, resourceSize)
+                    .get();
+            weatherBitmap.compress(Bitmap.CompressFormat.PNG, 100, byteArrayOutputStream);
+            return Asset.createFromBytes(byteArrayOutputStream.toByteArray());
+        } catch(Exception e) {
+            Log.e(LOG_TAG, "Could not load wearable weather bitmap.");
+        }
+        return null;
     }
 
     private void updateWidgets() {
